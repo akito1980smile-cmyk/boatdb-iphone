@@ -68,7 +68,7 @@ def bounds(start,end):
     if (end-start).days>=MAX_DAYS: raise HTTPException(400,f'一度に取得できるのは最大{MAX_DAYS}日です')
 
 @app.get('/',response_class=HTMLResponse)
-def home(request:Request):return templates.TemplateResponse('index.html',{'request':request,'venues':VENUES})
+def home(request:Request):return templates.TemplateResponse(request=request,name='index.html',context={'venues':VENUES})
 
 @app.get('/api/status')
 def status():return {'source':'BOAT RACE公式ダウンロード','venues':24,'max_days':MAX_DAYS,'extractor_ready':bool(shutil.which('lha')),'mode':'official-original-text'}
@@ -145,3 +145,46 @@ def export_index(start:date,end:date,kind:str=Query('K',pattern='^(K|B)$'),forma
         for row in [['出典','BOAT RACE公式配布ファイル'],['解析状況','文字列による候補抽出。着順・勝率・平均ST等の確定解析は未対応'],['場別検索','場名が同一行に明記される行のみ対象。全レースを網羅しません'],['利用','公式サイトの利用条件を確認してください']]:info.append(row)
         out=io.BytesIO();wb.save(out);payload=out.getvalue();media='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     return StreamingResponse(io.BytesIO(payload),media_type=media,headers={'Content-Disposition':f"attachment; filename={quote(filename)}"})
+
+
+# v3: structured extraction from official competition-result files
+from parser_v3 import parse_lines, RESULT_HEADERS, PAY_HEADERS, REJECT_HEADERS
+
+@app.get('/api/export-v3')
+def export_v3(start:date,end:date,format:str=Query('xlsx',pattern='^(xlsx|csv)$'),venue:int=Query(0,ge=0,le=24)):
+    bounds(start,end)
+    results,payouts,rejected=parse_lines(records(start,end,'K'))
+    if venue:
+        selected=VENUES[venue-1]
+        results=[r for r in results if r['競艇場']==selected]
+        payouts=[r for r in payouts if r['競艇場']==selected]
+        rejected=[r for r in rejected if r['競艇場']==selected]
+    if not results and not payouts:
+        raise HTTPException(404,'対象期間の解析可能な公式成績データがありません')
+    if format=='csv':
+        # CSV is one flat runner table with matching payout attached.
+        pmap={(p['日付'],p['競艇場'],p['R']):p for p in payouts}
+        headers=RESULT_HEADERS[:-1]+['三連単組番','三連単払戻金','原文']
+        out=io.StringIO(newline='');w=csv.writer(out);w.writerow(headers)
+        for r in results:
+            p=pmap.get((r['日付'],r['競艇場'],r['R']),{})
+            w.writerow([r.get(k,'') for k in RESULT_HEADERS[:-1]]+[p.get('三連単組番',''),p.get('三連単払戻金',''),r['原文']])
+        payload=out.getvalue().encode('utf-8-sig');media='text/csv; charset=utf-8'
+    else:
+        wb=Workbook();ws=wb.active;ws.title='着順・ST';ws.append(RESULT_HEADERS)
+        for r in results:ws.append([r.get(k,'') for k in RESULT_HEADERS])
+        ps=wb.create_sheet('三連単払戻');ps.append(PAY_HEADERS)
+        for r in payouts:ps.append([r.get(k,'') for k in PAY_HEADERS])
+        rs=wb.create_sheet('要確認');rs.append(REJECT_HEADERS)
+        for r in rejected:rs.append([r.get(k,'') for k in REJECT_HEADERS])
+        info=wb.create_sheet('説明');info.append(['項目','説明'])
+        for row in [('出典','BOAT RACE公式競走成績（Kファイル）'),('解析','通常着順行のみ厳格抽出。特殊着順は要確認へ'),('ST','F/L等の記号を含む可能性があるため文字列として保存'),('三連単','払戻金は100円あたりの公式表示値'),('注意','抽出結果は公式原文と照合してください'),('期間','最大31日／回。過去全期間の自動保存は未実装')]:info.append(row)
+        for sheet in wb:
+            sheet.freeze_panes='A2';sheet.auto_filter.ref=sheet.dimensions
+            for c in sheet[1]:c.font=Font(color='FFFFFF',bold=True);c.fill=PatternFill('solid',fgColor='163C66')
+            for col in sheet.columns:
+                letter=col[0].column_letter
+                sheet.column_dimensions[letter].width=min(65,max(13,max(len(str(c.value or '')) for c in list(col)[:100])+3))
+        out=io.BytesIO();wb.save(out);payload=out.getvalue();media='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    filename=f'boatrace_v3_{start:%Y%m%d}_{end:%Y%m%d}.{format}'
+    return StreamingResponse(io.BytesIO(payload),media_type=media,headers={'Content-Disposition':f'attachment; filename="{filename}"'})
