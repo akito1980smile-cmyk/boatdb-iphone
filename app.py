@@ -188,3 +188,53 @@ def export_v3(start:date,end:date,format:str=Query('xlsx',pattern='^(xlsx|csv)$'
         out=io.BytesIO();wb.save(out);payload=out.getvalue();media='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     filename=f'boatrace_v3_{start:%Y%m%d}_{end:%Y%m%d}.{format}'
     return StreamingResponse(io.BytesIO(payload),media_type=media,headers={'Content-Disposition':f'attachment; filename="{filename}"'})
+
+
+# v3 structured export. Unrecognized fixed-width rows are preserved in a review sheet.
+from parser_v3 import parse_lines, RESULT_HEADERS, PAY_HEADERS, REJECT_HEADERS
+
+@app.get('/api/v3/preview')
+def v3_preview(start:date,end:date,venue:int=Query(0,ge=0,le=24)):
+    bounds(start,end)
+    results,payouts,rejected=parse_lines(records(start,end,'K'))
+    if venue:
+        selected=VENUES[venue-1]
+        results=[x for x in results if x['競艇場']==selected]
+        payouts=[x for x in payouts if x['競艇場']==selected]
+        rejected=[x for x in rejected if x['競艇場']==selected]
+    return {'results':results[:100],'payouts':payouts[:100], 'counts':{'results':len(results),'payouts':len(payouts),'rejected':len(rejected)},'notice':'未解析の着順行はExcelの要確認シートに記録します。正確性は公式原文との照合が必要です。'}
+
+@app.get('/api/v3/export')
+def v3_export(start:date,end:date,venue:int=Query(0,ge=0,le=24),format:str=Query('xlsx',pattern='^(xlsx|csv)$')):
+    bounds(start,end)
+    results,payouts,rejected=parse_lines(records(start,end,'K'))
+    if venue:
+        selected=VENUES[venue-1]
+        results=[x for x in results if x['競艇場']==selected]
+        payouts=[x for x in payouts if x['競艇場']==selected]
+        rejected=[x for x in rejected if x['競艇場']==selected]
+    if not results and not payouts and not rejected:
+        raise HTTPException(404,'解析可能なデータがありません。期間・配布状況を確認してください。')
+    filename=f'boatrace_v3_{start:%Y%m%d}_{end:%Y%m%d}.{format}'
+    if format=='csv':
+        # CSV supports one table; payout fields are joined to each confirmed finish row.
+        headers=RESULT_HEADERS+[x for x in PAY_HEADERS if x not in ('日付','競艇場','R','原文')]
+        lookup={(x['日付'],x['競艇場'],x['R']):x for x in payouts}
+        out=io.StringIO(newline='');w=csv.writer(out);w.writerow(headers)
+        for r in results:
+            pay=lookup.get((r['日付'],r['競艇場'],r['R']),{})
+            w.writerow([r.get(k,'') for k in RESULT_HEADERS]+[pay.get(k,'') for k in headers[len(RESULT_HEADERS):]])
+        payload=out.getvalue().encode('utf-8-sig');media='text/csv; charset=utf-8'
+    else:
+        wb=Workbook();wb.remove(wb.active)
+        for title,headers,items in [('着順・ST',RESULT_HEADERS,results),('払戻金',PAY_HEADERS,payouts),('要確認',REJECT_HEADERS,rejected)]:
+            ws=wb.create_sheet(title);ws.append(headers)
+            for r in items:ws.append([str(r.get(k,''))[:32767] if isinstance(r.get(k,''),str) else r.get(k,'') for k in headers])
+            ws.freeze_panes='A2';ws.auto_filter.ref=ws.dimensions
+            for c in ws[1]:c.font=Font(color='FFFFFF',bold=True);c.fill=PatternFill('solid',fgColor='163C66')
+            for col in ws.columns:
+                letter=col[0].column_letter
+                ws.column_dimensions[letter].width=min(65,max(12,len(str(col[0].value))*2+3))
+        ws=wb.create_sheet('説明');ws.append(['項目','内容']);ws.append(['出典','BOAT RACE公式配布の競走成績(K)']);ws.append(['注意','抽出結果は原文との照合が必要。認識できない行は要確認に保存。']);ws.append(['CSV','着順に払戻情報を結合した単一表。未認識行は含まれません。']);ws.append(['件数',f'着順 {len(results)} / 払戻 {len(payouts)} / 要確認 {len(rejected)}'])
+        out=io.BytesIO();wb.save(out);payload=out.getvalue();media='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    return StreamingResponse(io.BytesIO(payload),media_type=media,headers={'Content-Disposition':f'attachment; filename={filename}'})
