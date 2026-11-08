@@ -68,12 +68,8 @@ def bounds(start,end):
     if (end-start).days>=MAX_DAYS: raise HTTPException(400,f'一度に取得できるのは最大{MAX_DAYS}日です')
 
 @app.get('/',response_class=HTMLResponse)
-def home(request: Request):
-    return templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={"venues": VENUES}
-    )
+def home(request:Request):return templates.TemplateResponse('index.html',{'request':request,'venues':VENUES})
+
 @app.get('/api/status')
 def status():return {'source':'BOAT RACE公式ダウンロード','venues':24,'max_days':MAX_DAYS,'extractor_ready':bool(shutil.which('lha')),'mode':'official-original-text'}
 
