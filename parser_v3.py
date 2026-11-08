@@ -13,10 +13,10 @@ def compact(s):
     return re.sub(r'\s+','',norm(s))
 
 # A finish line begins with two-digit placing, boat number, four-digit racer id.
-FINISH = re.compile(r'^\s*(0[1-6])\s+([1-6])\s+(\d{4})\s+(.+?)\s+(\d{1,2})\s+(\d{1,2})\s+(\d\.\d{2})\s+([1-6])\s+([FL]?\.?\d{1,2}\.\d{2}|[FL]\.\d{2}|[FL])(?:\s+(\d\.\d{2}\.\d))?\s*$')
+FINISH = re.compile(r'^\s*(0[1-6])\s+([1-6])\s+(\d{4})\s+(.+?)\s+(\d{1,2})\s+(\d{1,3})\s+(\d\.\d{2})\s+([1-6])\s+([FL]?\.?\d{1,2}\.\d{2}|[FL]\.\d{2}|[FL])(?:\s+(\d\.\d{2}\.\d))?\s*$')
 # Rows without a recorded race time (typically fifth/sixth place) are valid.
 # Some archives also omit the exhibition time; keep it blank rather than inventing it.
-FINISH_NO_EXHIBITION = re.compile(r'^\s*(0[1-6])\s+([1-6])\s+(\d{4})\s+(.+?)\s+(\d{1,2})\s+(\d{1,2})\s+([1-6])\s+([FL]?\.?\d{1,2}\.\d{2}|[FL]\.\d{2}|[FL])(?:\s+(\d\.\d{2}\.\d))?\s*$')
+FINISH_NO_EXHIBITION = re.compile(r'^\s*(0[1-6])\s+([1-6])\s+(\d{4})\s+(.+?)\s+(\d{1,2})\s+(\d{1,3})\s+([1-6])\s+([FL]?\.?\d{1,2}\.\d{2}|[FL]\.\d{2}|[FL])(?:\s+(\d\.\d{2}\.\d))?\s*$')
 # Official K results may mark non-finishers using a short status in place of 01..06.
 # Do not assign an artificial placing to such entries.
 NON_FINISH = re.compile(r'^\s*(?:欠|失|転|落|沈|妨|不|エ|Ｆ|Ｌ|F|L)\s+[1-6]\s+\d{4}\b')
@@ -63,11 +63,12 @@ def parse_lines(lines):
         if not race or not venue:continue
         # Only consider rows whose prefix resembles an official finish entry.
         if not re.match(r'^\s*(?:0[1-6])\s+[1-6]\s+\d{4}\b',clean):continue
-        f=FINISH.match(clean)
+        finish_clean = re.sub(r"\s+\.\s*\.\s*$", "", clean)
+        f=FINISH.match(finish_clean)
         if f:
             rank,boat,racer,name,motor,hull,exhibition,course,st,rt=f.groups()
         else:
-            f=FINISH_NO_EXHIBITION.match(clean)
+            f=FINISH_NO_EXHIBITION.match(finish_clean)
             if f:
                 rank,boat,racer,name,motor,hull,course,st,rt=f.groups()
                 exhibition=None
