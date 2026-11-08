@@ -14,6 +14,13 @@ def compact(s):
 
 # A finish line begins with two-digit placing, boat number, four-digit racer id.
 FINISH = re.compile(r'^\s*(0[1-6])\s+([1-6])\s+(\d{4})\s+(.+?)\s+(\d{1,2})\s+(\d{1,2})\s+(\d\.\d{2})\s+([1-6])\s+([FL]?\.?\d{1,2}\.\d{2}|[FL]\.\d{2}|[FL])(?:\s+(\d\.\d{2}\.\d))?\s*$')
+# Rows without a recorded race time (typically fifth/sixth place) are valid.
+# Some archives also omit the exhibition time; keep it blank rather than inventing it.
+FINISH_NO_EXHIBITION = re.compile(r'^\s*(0[1-6])\s+([1-6])\s+(\d{4})\s+(.+?)\s+(\d{1,2})\s+(\d{1,2})\s+([1-6])\s+([FL]?\.?\d{1,2}\.\d{2}|[FL]\.\d{2}|[FL])(?:\s+(\d\.\d{2}\.\d))?\s*$')
+# Official K results may mark non-finishers using a short status in place of 01..06.
+# Do not assign an artificial placing to such entries.
+NON_FINISH = re.compile(r'^\s*(?:欠|失|転|落|沈|妨|不|エ|Ｆ|Ｌ|F|L)\s+[1-6]\s+\d{4}\b')
+
 # payout summary row (only within a confirmed venue's payout section)
 PAY = re.compile(r'^\s*(1[0-2]|[1-9])R\s+([1-6]-[1-6]-[1-6])\s+([\d,]+)\b')
 RACE = re.compile(r'^\s*(1[0-2]|[1-9])R\s+.+?H\s*(\d{3,4})m\b',re.I)
@@ -57,11 +64,17 @@ def parse_lines(lines):
         # Only consider rows whose prefix resembles an official finish entry.
         if not re.match(r'^\s*(?:0[1-6])\s+[1-6]\s+\d{4}\b',clean):continue
         f=FINISH.match(clean)
-        if not f:
-            rejected.append({'日付':str(day),'競艇場':venue,'R':race,'行番号':number,'原文':raw,'理由':'通常着順行の書式と一致しない'})
-            continue
-        rank,boat,racer,name,motor,hull,exhibition,course,st,rt=f.groups()
-        results.append({'日付':str(day),'競艇場':venue,'R':race,'距離m':distance,'着順':int(rank),'艇番':int(boat),'登録番号':racer,'選手名':compact(name),'モーター':int(motor),'ボート':int(hull),'展示タイム':float(exhibition),'進入コース':int(course),'ST':st,'レースタイム':rt or '', '原文':raw})
+        if f:
+            rank,boat,racer,name,motor,hull,exhibition,course,st,rt=f.groups()
+        else:
+            f=FINISH_NO_EXHIBITION.match(clean)
+            if f:
+                rank,boat,racer,name,motor,hull,course,st,rt=f.groups()
+                exhibition=None
+            else:
+                rejected.append({'日付':str(day),'競艇場':venue,'R':race,'行番号':number,'原文':raw,'理由':'着順行の書式と一致しない（要確認）'})
+                continue
+        results.append({'日付':str(day),'競艇場':venue,'R':race,'距離m':distance,'着順':int(rank),'艇番':int(boat),'登録番号':racer,'選手名':compact(name),'モーター':int(motor),'ボート':int(hull),'展示タイム':float(exhibition) if exhibition is not None else '', '進入コース':int(course),'ST':st,'レースタイム':rt or '', '原文':raw})
     return results,payouts,rejected
 
 RESULT_HEADERS=['日付','競艇場','R','距離m','着順','艇番','登録番号','選手名','モーター','ボート','展示タイム','進入コース','ST','レースタイム','原文']
