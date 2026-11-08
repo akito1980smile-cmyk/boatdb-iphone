@@ -28,7 +28,7 @@ def parse_lines(lines):
         if key!=current_file:
             current_file=key;venue='';race=None;distance=None;in_payout=False
         clean=norm(raw); tight=compact(raw)
-        if '［成績］' in raw or '[成績]' in clean:
+        if '[成績]' in clean:
             label=tight.split('[成績]')[0]
             matches=[v for v in VENUE_NAMES if v==label]
             if matches:venue=matches[0];race=None
@@ -43,7 +43,16 @@ def parse_lines(lines):
         if in_payout and venue:
             p=PAY.match(clean)
             if p:
-                payouts.append({'日付':str(day),'競艇場':venue,'R':int(p.group(1)),'三連単組番':p.group(2),'三連単払戻金':int(p.group(3).replace(',','')),'原文':raw})
+                # Official summary has four ordered combination / amount pairs.
+                tokens=clean[p.end():].split()
+                pairs=[(p.group(2),p.group(3))]
+                for i in range(0,min(len(tokens)-1,6),2):
+                    if re.fullmatch(r'[1-6](?:-[1-6]){1,2}',tokens[i]) and re.fullmatch(r'[\d,]+',tokens[i+1]):
+                        pairs.append((tokens[i],tokens[i+1]))
+                row={'日付':str(day),'競艇場':venue,'R':int(p.group(1)),'原文':raw}
+                for title,(combo,amount) in zip(('三連単','三連複','二連単','二連複'),pairs):
+                    row[title+'組番']=combo;row[title+'払戻金']=int(amount.replace(',',''))
+                payouts.append(row)
         if not race or not venue:continue
         # Only consider rows whose prefix resembles an official finish entry.
         if not re.match(r'^\s*(?:0[1-6])\s+[1-6]\s+\d{4}\b',clean):continue
@@ -56,5 +65,5 @@ def parse_lines(lines):
     return results,payouts,rejected
 
 RESULT_HEADERS=['日付','競艇場','R','距離m','着順','艇番','登録番号','選手名','モーター','ボート','展示タイム','進入コース','ST','レースタイム','原文']
-PAY_HEADERS=['日付','競艇場','R','三連単組番','三連単払戻金','原文']
+PAY_HEADERS=['日付','競艇場','R','三連単組番','三連単払戻金','三連複組番','三連複払戻金','二連単組番','二連単払戻金','二連複組番','二連複払戻金','原文']
 REJECT_HEADERS=['日付','競艇場','R','行番号','原文','理由']
